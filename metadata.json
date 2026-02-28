@@ -1,0 +1,5 @@
+{
+  "name": "BioSynth AI",
+  "description": "A professional bioinformatics platform featuring triple-AI integration: Gemini Flash, Gemini Pro, and Local Browser-based AI for sequence analysis and molecular research.",
+  "requestFramePermissions": []
+}
