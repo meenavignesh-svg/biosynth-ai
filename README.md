@@ -1,20 +1,28 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# BioSynth AI
+**An Intelligent Bioinformatics Workspace powered by Gemini 2.5 & Agentic AI**
 
-# Run and deploy your AI Studio app
+BioSynth AI is a modern web application designed to bridge the gap between genomic data and actionable insights. Built using Google AI Studio's Build Mode, it leverages large language models to automate sequence analysis, visualization, and biological data processing.
 
-This contains everything you need to run your app locally.
+---
+ Features
+- **Intelligent Sequence Analysis**: Automated parsing and analysis of FASTA/FASTQ files.
+- **Visual Genomics**: Dynamic generation of charts and sequence maps (GC-content, motif mapping).
+- **Agentic Pipeline**: Describe a biological task in plain English, and BioSynth AI generates the corresponding analysis logic.
+- **Export-Ready Results**: Professional reports generated in real-time with image-based data visualization.
 
-View your app in AI Studio: https://ai.studio/apps/409c358d-5056-41cd-843c-2914949a344d
+## 🛠️ Tech Stack
+- **Frontend**: React.js / Next.js
+- **AI Brain**: Gemini 2.5 Pro (via Google Generative AI SDK)
+- **Visualization**: Recharts / Tailwind CSS
+- **Deployment**: Vercel (CI/CD via GitHub)
 
-## Run Locally
+---
 
-**Prerequisites:**  Node.js
+## 📦 Installation & Setup
 
+To run this project locally or deploy it to your own server:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1. **Clone the repository**
+   ```bash
+   git clone [https://github.com/meenavignesh-svg/biosynth-ai.git](https://github.com/meenavignesh-svg/biosynth-ai.git)
+   cd biosynth-ai
