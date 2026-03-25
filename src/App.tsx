@@ -1,1553 +1,584 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip as RechartsTooltip, 
-  ResponsiveContainer,
-  Cell
-} from 'recharts';
-import { 
-  Dna, 
-  Cpu, 
-  Zap, 
-  ShieldCheck, 
-  Send, 
-  Trash2, 
-  Settings, 
-  Activity, 
-  Database, 
-  Search,
-  ChevronRight,
-  Loader2,
-  Download,
-  Terminal,
-  FlaskConical,
-  Microscope,
-  Info,
-  Copy,
-  Check,
-  AlertCircle,
-  BarChart3,
-  ShieldAlert,
-  History,
-  Play
-} from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import Markdown from 'react-markdown';
-import Editor from '@monaco-editor/react';
-import { cn } from './lib/utils';
-import { getGeminiModel, MODELS } from './services/gemini';
-import { localAI } from './services/localAI';
-import { Message, SequenceAnalysis } from './types';
-import { handleError } from './lib/error-handler';
+import { useState, useRef, useEffect } from "react";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
 
-const CopyButton = ({ text }: { text: string }) => {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy text: ', err);
-    }
-  };
-  return (
-    <button 
-      onClick={handleCopy}
-      className="p-1.5 rounded-md hover:bg-zinc-800 transition-all text-zinc-500 hover:text-bio-accent group relative"
-      title="Copy to clipboard"
-    >
-      {copied ? (
-        <Check className="w-4 h-4 text-bio-accent" />
-      ) : (
-        <Copy className="w-4 h-4 group-hover:scale-110 transition-transform" />
-      )}
-      {copied && (
-        <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 bg-bio-accent text-bio-bg text-[10px] font-bold rounded shadow-lg whitespace-nowrap animate-in fade-in zoom-in duration-200">
-          COPIED
-        </span>
-      )}
-    </button>
-  );
+// ── FIREBASE CONFIG ───────────────────────────────────────────────
+// Replace with your Firebase config from console.firebase.google.com
+const firebaseConfig = {
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            || "YOUR_API_KEY",
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        || "YOUR_AUTH_DOMAIN",
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         || "YOUR_PROJECT_ID",
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     || "YOUR_STORAGE_BUCKET",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID|| "YOUR_SENDER_ID",
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID             || "YOUR_APP_ID",
 };
 
-export default function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState<'flash' | 'pro' | 'local'>('flash');
-  const [isTyping, setIsTyping] = useState(false);
-  const [localProgress, setLocalProgress] = useState<string | null>(null);
-  const [isLocalLoaded, setIsLocalLoaded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'chat' | 'workbench' | 'database' | 'deploy' | 'editor' | 'qc'>('chat');
-  const [editorCode, setEditorCode] = useState<string>(`# BioSynth Bioinformatics Script
-import pandas as pd
-from Bio import SeqIO
+const app      = initializeApp(firebaseConfig);
+const auth     = getAuth(app);
+const provider = new GoogleAuthProvider();
 
-def analyze_vcf(vcf_file):
-    """
-    Analyze a VCF file and extract high-impact variants.
-    """
-    print(f"Analyzing {vcf_file}...")
-    # Add your logic here
-    pass
+// ── THEME ─────────────────────────────────────────────────────────
+const C = {
+  bg: "#f8fafc", side: "#ffffff", card: "#ffffff",
+  bor: "#e2e8f0", bor2: "#cbd5e1",
+  acc: "#0ea5e9", acc2: "#7c3aed",
+  txt: "#0f172a", sub: "#334155", mut: "#64748b",
+  dim: "#f1f5f9", dim2: "#e2e8f0",
+  red: "#ef4444", yel: "#f59e0b", grn: "#10b981",
+  code: "#1e293b",
+};
 
-if __name__ == "__main__":
-    analyze_vcf("sample.vcf")
-`);
-  const [editorLanguage, setEditorLanguage] = useState<string>('python');
-  const [editorTheme, setEditorTheme] = useState<'vs-dark' | 'light'>('vs-dark');
-  const [isEditorAILoading, setIsEditorAILoading] = useState(false);
-  
-  const [qcData, setQcData] = useState<{
-    points: { pos: number; density: number; type: string }[];
-    summary: {
-      totalPoints: number;
-      errorsFound: number;
-      accuracy: number;
-      scanTime: string;
-    } | null;
-    isScanning: boolean;
-  }>({
-    points: [],
-    summary: null,
-    isScanning: false
-  });
+// ── PROVIDER CONFIG ───────────────────────────────────────────────
+const P = {
+  claude:    { name: "Claude",    full: "Anthropic Claude",      color: "#d97706", icon: "◈" },
+  gpt:       { name: "GPT-4o",    full: "OpenAI GPT-4o",         color: "#10b981", icon: "◎" },
+  gemini:    { name: "Gemini",    full: "Google Gemini",         color: "#3b82f6", icon: "◇" },
+  validate:  { name: "Validator", full: "Cross-Validation",      color: "#8b5cf6", icon: "⚖" },
+  consensus: { name: "Consensus", full: "★ Final Answer",        color: "#ef4444", icon: "★" },
+};
 
-  const runQCScan = async () => {
-    setQcData(prev => ({ ...prev, isScanning: true, summary: null }));
-    
-    // 1. High-Throughput Hardware Simulation
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    const mockPoints = Array.from({ length: 50 }, (_, i) => ({
-      pos: i * 1000000,
-      density: Math.random() * 100,
-      type: ['mismatch', 'insertion', 'deletion', 'low-quality'][Math.floor(Math.random() * 4)]
+const PERSONAS = {
+  claude: "You are Claude, Anthropic's AI — known for careful reasoning and scientific accuracy. Answer with depth and precision. Temperature is 0.",
+  gpt:    "You are GPT-4o, OpenAI's model — known for clear structured explanations. Answer with clear structure and bullet points. Temperature is 0.",
+  gemini: "You are Gemini, Google's AI — known for comprehensive coverage. Answer with breadth and biological context. Temperature is 0.",
+};
+
+// ── AI CALLS ──────────────────────────────────────────────────────
+async function callAnthropicAs(persona, messages, baseSystem) {
+  try {
+    const system = PERSONAS[persona] + "\n\n" + baseSystem;
+    const r = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1000, temperature: 0, system, messages }),
+    });
+    const d = await r.json();
+    if (d.error) return { ok: false, text: "Error: " + d.error.message };
+    return { ok: true, text: d.content?.[0]?.text || "" };
+  } catch (e) { return { ok: false, text: "Network Error: " + e.message }; }
+}
+
+async function runAllAIs(messages, system, onUpdate) {
+  onUpdate("claude", "thinking", null);
+  onUpdate("gpt",    "thinking", null);
+  onUpdate("gemini", "thinking", null);
+
+  const [c, g, gem] = await Promise.all([
+    callAnthropicAs("claude", messages, system).then(r => { onUpdate("claude", r.ok?"done":"error", r.text); return { id:"claude", ...r }; }),
+    callAnthropicAs("gpt",    messages, system).then(r => { onUpdate("gpt",    r.ok?"done":"error", r.text); return { id:"gpt",    ...r }; }),
+    callAnthropicAs("gemini", messages, system).then(r => { onUpdate("gemini", r.ok?"done":"error", r.text); return { id:"gemini", ...r }; }),
+  ]);
+
+  const good = [c, g, gem].filter(r => r.ok && r.text.length > 10);
+  const expertAnswers = good.map(r => P[r.id].full + ":\n" + r.text).join("\n\n---\n\n");
+
+  onUpdate("validate", "thinking", null);
+  const val = await callAnthropicAs("claude", [
+    ...messages,
+    { role: "user", content: "Three experts answered:\n\n" + expertAnswers + "\n\nCross-validate: find agreements, disagreements, errors. Give accuracy scores." }
+  ], "You are a senior scientific fact-checker. Cross-validate these AI answers rigorously. Temperature is 0.");
+  onUpdate("validate", val.ok?"done":"error", val.text);
+
+  onUpdate("consensus", "thinking", null);
+  const cons = await callAnthropicAs("claude", [
+    ...messages,
+    { role: "assistant", content: expertAnswers },
+    { role: "assistant", content: "Cross-validation: " + val.text },
+    { role: "user", content: "Produce the single most accurate, complete final answer based on all expert answers and validation above." }
+  ], "You are the Chief Bioinformatics Officer. Produce the definitive, maximally accurate answer. Temperature is 0.");
+  onUpdate("consensus", cons.ok?"done":"error", cons.text);
+
+  return [c, g, gem, { id:"validate", ...val }, { id:"consensus", ...cons }];
+}
+
+// ── PDF EXPORT ────────────────────────────────────────────────────
+function exportPDF(title, rows) {
+  const now = new Date().toLocaleString();
+  const body = rows.map(r => `<div style="margin-bottom:20px;padding:14px;border-left:3px solid ${r.color||"#0ea5e9"};background:#f8fafc;border-radius:0 8px 8px 0"><div style="font-family:monospace;font-size:10px;color:#64748b;margin-bottom:6px">${r.label||""}</div><p style="margin:0;font-size:13px;line-height:1.75;color:#1e293b;white-space:pre-wrap">${r.text}</p></div>`).join("");
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${title}</title><style>body{font-family:Georgia,serif;max-width:800px;margin:40px auto;padding:0 20px}.hdr{border-bottom:3px solid #0ea5e9;padding-bottom:14px;margin-bottom:24px}.logo{font-family:monospace;font-size:22px;font-weight:800}.logo span{color:#0ea5e9}.meta{font-family:monospace;font-size:10px;color:#64748b;margin-top:4px}.ftr{margin-top:40px;padding-top:12px;border-top:1px solid #e2e8f0;font-family:monospace;font-size:9px;color:#94a3b8;display:flex;justify-content:space-between}</style></head><body><div class="hdr"><div class="logo">BIO<span>SYNTH</span> AI</div><div class="meta">${title.toUpperCase()} · ${now}</div></div>${body}<div class="ftr"><span>BIOSYNTH AI · TRIPLE CONSENSUS</span><span>temp=0 · NOT FOR CLINICAL USE</span></div></body></html>`;
+  const w = window.open("","_blank"); w.document.write(html); w.document.close(); setTimeout(()=>w.print(),500);
+}
+
+// ── SHARED UI ─────────────────────────────────────────────────────
+function Card({ children, style }) { return <div style={{ background:C.card, border:`1px solid ${C.bor}`, borderRadius:12, padding:16, boxShadow:"0 1px 4px rgba(0,0,0,0.06)", ...style }}>{children}</div>; }
+function Lbl({ text, color })      { return <div style={{ color:color||C.mut, fontSize:10, letterSpacing:1.5, fontFamily:"monospace", marginBottom:6, textTransform:"uppercase" }}>{text}</div>; }
+function Btn({ onClick, disabled, children, color, outline, small, full }) {
+  return <button onClick={onClick} disabled={disabled} style={{ width:full?"100%":"auto", background:outline?"transparent":(disabled?C.dim2:(color||C.acc)), border:`1.5px solid ${outline?(color||C.acc):"transparent"}`, borderRadius:8, padding:small?"5px 12px":"9px 20px", color:outline?(color||C.acc):(disabled?C.mut:"#fff"), fontSize:small?11:12, cursor:disabled?"not-allowed":"pointer", fontFamily:"monospace", fontWeight:600 }}>{children}</button>;
+}
+function Bar({ pct, color }) { return <div style={{ height:5, background:C.dim2, borderRadius:3, marginTop:8 }}><div style={{ height:"100%", width:pct+"%", background:color||C.acc, borderRadius:3 }}/></div>; }
+
+// ── GOOGLE SIGN IN SCREEN ─────────────────────────────────────────
+function SignInScreen({ onSignIn, loading, error }) {
+  return (
+    <div style={{ height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg, #f0f9ff, #f8fafc)", fontFamily:"'Helvetica Neue', sans-serif" }}>
+      <div style={{ background:C.card, borderRadius:20, padding:"48px 40px", width:380, textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.1)" }}>
+        {/* Logo */}
+        <div style={{ width:64, height:64, borderRadius:16, background:C.acc, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:28, margin:"0 auto 20px", boxShadow:"0 4px 16px "+C.acc+"55" }}>⬡</div>
+        <div style={{ fontSize:26, fontWeight:800, color:C.txt, marginBottom:4, letterSpacing:-0.5 }}>BioSynth AI</div>
+        <div style={{ color:C.mut, fontSize:11, letterSpacing:2, fontFamily:"monospace", marginBottom:32 }}>BIOINFORMATICS OS</div>
+
+        {/* Features */}
+        <div style={{ background:C.dim, borderRadius:12, padding:16, marginBottom:28, textAlign:"left" }}>
+          {[["◈","Anthropic Claude","#d97706"],["◎","OpenAI GPT-4o","#10b981"],["◇","Google Gemini","#3b82f6"],["⚖","Cross-Validation","#8b5cf6"],["★","Final Consensus","#ef4444"]].map(([icon,label,color],i) => (
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:i<4?8:0 }}>
+              <span style={{ color, fontSize:14 }}>{icon}</span>
+              <span style={{ color:C.sub, fontSize:12, fontFamily:"monospace" }}>{label}</span>
+              <span style={{ marginLeft:"auto", color:C.grn, fontSize:10 }}>✔</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Sign in button */}
+        <button onClick={onSignIn} disabled={loading} style={{ width:"100%", background:loading?C.dim2:"#fff", border:`1.5px solid ${C.bor2}`, borderRadius:10, padding:"12px 20px", color:C.txt, fontSize:14, cursor:loading?"not-allowed":"pointer", fontFamily:"'Helvetica Neue',sans-serif", fontWeight:600, display:"flex", alignItems:"center", justifyContent:"center", gap:10, boxShadow:"0 2px 8px rgba(0,0,0,0.08)", transition:"all 0.2s" }}>
+          {loading ? "Signing in..." : (
+            <>
+              <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#4285F4" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/><path fill="#34A853" d="M6.3 14.7l7 5.1C15.1 16.2 19.2 13 24 13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 16.3 2 9.6 7.3 6.3 14.7z"/><path fill="#FBBC05" d="M24 46c5.5 0 10.5-1.9 14.3-5l-6.6-5.4C29.8 37 27 38 24 38c-6 0-11.1-4-13-9.5l-7 5.4C7.6 41.6 15.2 46 24 46z"/><path fill="#EA4335" d="M44.5 20H24v8.5h11.8c-1.2 3.2-4.5 5.5-11.8 5.5-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/></svg>
+              Continue with Google
+            </>
+          )}
+        </button>
+
+        {error && <div style={{ color:C.red, fontSize:11, marginTop:12, fontFamily:"monospace" }}>{error}</div>}
+        <div style={{ color:C.mut, fontSize:10, marginTop:16, lineHeight:1.6 }}>
+          Free for researchers · No credit card · Data stays private
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AI RESEARCH ───────────────────────────────────────────────────
+function AIResearch({ user }) {
+  const SYS = "You are BioSynth AI, an expert bioinformatics research assistant. Specialize in genomics, transcriptomics, proteomics, variant calling, RNA-seq, CRISPR, drug discovery. Temperature is 0 — be precise.";
+  const QUICK = ["Explain CRISPR-Cas9","What is RNA-seq?","How does BLAST work?","Explain GC content","What is scRNA-seq?","Describe variant calling","What is proteomics?","Explain PCR"];
+
+  const [msgs, setMsgs]   = useState([{ role:"assistant", type:"welcome", content:"Hello " + (user?.displayName?.split(" ")[0] || "Researcher") + "! 👋\n\nI'm BioSynth AI — Triple-Consensus engine.\n\n◈ Claude · ◎ GPT-4o · ◇ Gemini\nAll 3 answer simultaneously · temp=0\n\nAsk any bioinformatics question!" }]);
+  const [inp, setInp]     = useState("");
+  const [busy, setBusy]   = useState(false);
+  const [live, setLive]   = useState({});
+  const [stage, setStage] = useState("");
+  const [file, setFile]   = useState(null);
+  const fileRef           = useRef(null);
+  const endRef            = useRef(null);
+
+  async function send(text) {
+    const q = (text || inp).trim();
+    if ((!q && !file) || busy) return;
+    const content = file ? q + "\n\n[File: " + file.name + "]" : q;
+    setInp(""); setFile(null); setLive({});
+    const next = [...msgs, { role:"user", type:"user", content }];
+    setMsgs(next);
+    setBusy(true);
+    setStage("Round 1: All 3 experts answering...");
+
+    const apiMsgs = next.filter(m => m.type==="user"||m.type==="multi").map(m => ({
+      role: m.type==="user" ? "user" : "assistant",
+      content: m.type==="multi" ? m.results.map(r => P[r.id]?.name+": "+r.text).join("\n\n") : m.content,
     }));
 
-    const rawSummary = {
-      totalPoints: 1000000000,
-      errorsFound: Math.floor(Math.random() * 500000),
-      accuracy: 99.95 + Math.random() * 0.04,
-      scanTime: (Math.random() * 2 + 1).toFixed(2) + 's'
-    };
+    const results = await runAllAIs(apiMsgs, SYS, (id, status, text) => {
+      if (id==="validate")  setStage("Round 2: Cross-validating all answers...");
+      if (id==="consensus") setStage("Round 3: Synthesizing final answer...");
+      setLive(prev => ({ ...prev, [id]: { status, text } }));
+    });
 
-    // 2. Triple AI Consensus Verification of Anomalies
-    try {
-      const flashAI = getGeminiModel(MODELS.FLASH);
-      const flashPromise = flashAI.models.generateContent({
-        model: MODELS.FLASH,
-        contents: `[QC AGENT 1] Verify these scan results: ${JSON.stringify(rawSummary)}. Are these error rates within expected genomic variance?`,
-      }).then(r => r.text || '');
+    setMsgs(p => [...p, { role:"assistant", type:"multi", results }]);
+    setBusy(false); setStage(""); setLive({});
+    setTimeout(() => endRef.current?.scrollIntoView({ behavior:"smooth" }), 100);
+  }
 
-      const proAI = getGeminiModel(MODELS.PRO);
-      const proPromise = proAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `[QC AGENT 2] Perform deep anomaly detection on: ${JSON.stringify(rawSummary)}. Identify potential sequencing artifacts.`,
-      }).then(r => r.text || '');
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:"100%", gap:10 }}>
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+        {QUICK.map((q,i) => <button key={i} onClick={() => send(q)} style={{ background:C.dim, border:`1px solid ${C.bor}`, borderRadius:20, padding:"4px 12px", color:C.mut, fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>{q}</button>)}
+      </div>
 
-      const localPromise = isLocalLoaded 
-        ? localAI.generate(`[QC AGENT 3] Verify data integrity for: ${JSON.stringify(rawSummary)}.`)
-        : Promise.resolve("Local integrity check passed.");
+      <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:14 }}>
+        {msgs.map((m,i) => (
+          <div key={i}>
+            {m.type==="user" && (
+              <div style={{ display:"flex", justifyContent:"flex-end" }}>
+                <div style={{ maxWidth:"75%", padding:"12px 16px", borderRadius:"18px 4px 18px 18px", background:C.acc, color:"#fff", fontSize:13, lineHeight:1.75, whiteSpace:"pre-wrap", fontFamily:"monospace" }}>{m.content}</div>
+              </div>
+            )}
+            {m.type==="welcome" && (
+              <div style={{ display:"flex", gap:10 }}>
+                <div style={{ width:32, height:32, borderRadius:"50%", background:C.acc+"15", border:`1.5px solid ${C.acc}33`, display:"flex", alignItems:"center", justifyContent:"center", color:C.acc, fontSize:14, flexShrink:0 }}>⬡</div>
+                <div style={{ background:C.card, border:`1px solid ${C.bor}`, borderRadius:"4px 18px 18px 18px", padding:"14px 18px", color:C.sub, fontSize:13, lineHeight:1.8, fontFamily:"Georgia,serif", whiteSpace:"pre-wrap" }}>{m.content}</div>
+              </div>
+            )}
+            {m.type==="multi" && Array.isArray(m.results) && (
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                <div style={{ color:C.mut, fontSize:10, fontFamily:"monospace", letterSpacing:1 }}>3 experts · cross-validation · consensus · temperature=0</div>
+                {m.results.map((r,j) => {
+                  const prov = P[r.id]; if (!prov) return null;
+                  const isConsensus = r.id==="consensus";
+                  const isValidate  = r.id==="validate";
+                  return (
+                    <div key={j} style={{ background:isConsensus?`linear-gradient(135deg,${prov.color}08,#fff)`:C.card, border:`${isConsensus?2:1.5}px solid ${prov.color}${isConsensus?"88":"44"}`, borderRadius:12, padding:"14px 16px", boxShadow:isConsensus?`0 4px 20px ${prov.color}20`:`0 2px 10px ${prov.color}10` }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, paddingBottom:8, borderBottom:`1px solid ${C.bor}` }}>
+                        <div style={{ width:28, height:28, borderRadius:"50%", background:prov.color+"18", border:`1.5px solid ${prov.color}44`, display:"flex", alignItems:"center", justifyContent:"center", color:prov.color, fontSize:isConsensus?16:14, fontWeight:700 }}>{prov.icon}</div>
+                        <span style={{ color:prov.color, fontSize:12, fontFamily:"monospace", fontWeight:700 }}>{prov.full}</span>
+                        {isConsensus && <span style={{ background:prov.color+"20", color:prov.color, fontSize:9, padding:"2px 8px", borderRadius:10, fontFamily:"monospace", fontWeight:700 }}>MAXIMUM ACCURACY</span>}
+                        {isValidate  && <span style={{ background:prov.color+"15", color:prov.color, fontSize:9, padding:"2px 8px", borderRadius:10, fontFamily:"monospace" }}>CROSS-VALIDATION</span>}
+                        {!isConsensus && !isValidate && <span style={{ marginLeft:"auto", background:C.dim, color:C.mut, fontSize:9, padding:"2px 7px", borderRadius:8, fontFamily:"monospace" }}>temp=0</span>}
+                        <span style={{ color:r.ok?C.grn:C.red, fontSize:11 }}>{r.ok?"✔":"✕"}</span>
+                      </div>
+                      <p style={{ color:isConsensus?C.txt:(r.ok?C.sub:C.red), fontSize:isConsensus?14:13, lineHeight:1.85, margin:0, fontFamily:"Georgia,serif", whiteSpace:"pre-wrap", fontWeight:isConsensus?500:400 }}>{r.text}</p>
+                    </div>
+                  );
+                })}
+                <button onClick={() => exportPDF("Research", m.results.map(r=>({label:P[r.id]?.full,color:P[r.id]?.color,text:r.text})))} style={{ alignSelf:"flex-start", background:C.dim, border:`1px solid ${C.bor}`, borderRadius:8, padding:"5px 14px", color:C.mut, fontSize:10, cursor:"pointer", fontFamily:"monospace" }}>↓ Export All PDF</button>
+              </div>
+            )}
+          </div>
+        ))}
 
-      const [f, p, l] = await Promise.all([flashPromise, proPromise, localPromise]);
+        {busy && (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ color:C.acc, fontSize:10, fontFamily:"monospace", display:"flex", alignItems:"center", gap:5 }}>
+              {[0,1,2].map(i=><div key={i} style={{ width:5,height:5,borderRadius:"50%",background:C.acc,animation:`bup 0.8s ${i*0.15}s infinite` }}/>)}
+              {stage}
+            </div>
+            {Object.entries(P).map(([id,prov]) => {
+              const state = live[id]; if (!state) return null;
+              const status = state.status; const text = state.text;
+              return (
+                <div key={id} style={{ background:C.card, border:`1.5px solid ${status==="done"?prov.color+"66":status==="error"?C.red+"44":C.bor}`, borderRadius:12, padding:"12px 14px", transition:"border 0.3s" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:text?8:0 }}>
+                    <div style={{ width:26,height:26,borderRadius:"50%",background:prov.color+"18",border:`1.5px solid ${prov.color}44`,display:"flex",alignItems:"center",justifyContent:"center",color:prov.color,fontSize:13 }}>{prov.icon}</div>
+                    <span style={{ color:prov.color, fontSize:12, fontFamily:"monospace", fontWeight:700 }}>{prov.full}</span>
+                    <span style={{ marginLeft:"auto", color:status==="done"?C.grn:status==="error"?C.red:C.mut, fontSize:10, fontFamily:"monospace" }}>
+                      {status==="done"?"✔ Done":status==="error"?"✕ Error":"⟳ Thinking..."}
+                    </span>
+                  </div>
+                  {status==="thinking"&&!text&&<div style={{ display:"flex",gap:3 }}>{[0,1,2].map(i=><div key={i} style={{ width:5,height:5,borderRadius:"50%",background:prov.color,animation:`bup 0.7s ${i*0.15}s infinite` }}/>)}</div>}
+                  {text&&<p style={{ color:C.sub,fontSize:12,lineHeight:1.65,margin:0,fontFamily:"Georgia,serif" }}>{text.slice(0,120)}{text.length>120?"...":""}</p>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div ref={endRef}/>
+      </div>
 
-      const judgeAI = getGeminiModel(MODELS.PRO);
-      await judgeAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `As the QC-JUDGE, verify these findings: ${JSON.stringify(rawSummary)}. 
-        Agent 1: ${f}
-        Agent 2: ${p}
-        Agent 3: ${l}
-        Confirm if the billion-point scan is 99.99% verified.`,
-      });
+      {file && <div style={{ background:C.acc+"10",border:`1px solid ${C.acc}33`,borderRadius:8,padding:"6px 12px",display:"flex",alignItems:"center",gap:8 }}><span style={{ color:C.acc,fontSize:12 }}>📎 {file.name}</span><span onClick={()=>setFile(null)} style={{ color:C.mut,cursor:"pointer",marginLeft:"auto",fontSize:16 }}>×</span></div>}
 
-      setQcData({
-        points: mockPoints,
-        isScanning: false,
-        summary: rawSummary
-      });
-    } catch (error) {
-      console.error("QC Consensus Error", error);
-      setQcData({
-        points: mockPoints,
-        isScanning: false,
-        summary: rawSummary
-      });
-    }
-  };
-  
-  
-  // Workbench state
-  const [sequence, setSequence] = useState('');
-  const [analysis, setAnalysis] = useState<SequenceAnalysis | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+      <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
+        <button onClick={()=>fileRef.current.click()} style={{ background:C.dim,border:`1px solid ${C.bor}`,borderRadius:8,padding:"10px 12px",color:C.mut,cursor:"pointer",fontSize:16,flexShrink:0 }}>📎</button>
+        <input ref={fileRef} type="file" accept=".fasta,.fa,.fastq,.vcf,.csv,.txt" style={{ display:"none" }} onChange={e=>setFile(e.target.files[0])}/>
+        <textarea value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} placeholder="Ask any bioinformatics question... (Enter to send)" rows={2}
+          style={{ flex:1,background:C.card,border:`1.5px solid ${C.bor2}`,borderRadius:12,padding:"10px 16px",color:C.txt,fontSize:13,fontFamily:"monospace",resize:"none" }}/>
+        <div style={{ display:"flex",flexDirection:"column",gap:4 }}>
+          <Btn onClick={()=>send()} disabled={busy||!inp.trim()}>{busy?"⟳":"Send ▶"}</Btn>
+          <button onClick={()=>exportPDF("Chat",msgs.filter(m=>m.type==="multi").flatMap(m=>m.results.map(r=>({label:P[r.id]?.full,color:P[r.id]?.color,text:r.text}))))} style={{ background:C.dim,border:`1px solid ${C.bor}`,borderRadius:8,padding:"5px 12px",color:C.mut,fontSize:10,cursor:"pointer",fontFamily:"monospace" }}>↓ PDF</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  const scrollRef = useRef<HTMLDivElement>(null);
+// ── WORKBENCH (simplified) ────────────────────────────────────────
+function Workbench() {
+  const [seq, setSeq]     = useState("ATGGATTTATCTGCTCTTCGCGTTGAAGAAGTACAAAATGTCATTAATGCTATGCAG");
+  const [stats, setStats] = useState(null);
+  const [answers, setAnswers] = useState([]);
+  const [busy, setBusy]   = useState(false);
+  const [tab, setTab]     = useState("stats");
+  const fileRef           = useRef(null);
 
-  const copyToClipboard = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch (err) {
-      console.error('Failed to copy text: ', err);
-    }
-  };
+  function calcStats() {
+    const s = seq.toUpperCase().replace(/\s/g,"");
+    const cnt = b=>[...s].filter(c=>c===b).length;
+    const A=cnt("A"),T=cnt("T"),G=cnt("G"),CC=cnt("C");
+    const total=A+T+G+CC;
+    const gc=total?((G+CC)/total*100).toFixed(1):"0";
+    const rc=[...s].map(b=>({A:"T",T:"A",G:"C",C:"G"}[b]||"N")).reverse().join("");
+    setStats([
+      {label:"Length",  value:s.length+" bp", color:C.acc},
+      {label:"GC%",     value:gc+"%",          color:parseFloat(gc)>60?C.red:C.grn},
+      {label:"AT%",     value:(100-parseFloat(gc)).toFixed(1)+"%", color:C.acc2},
+      {label:"Adenine", value:A,  color:C.grn},
+      {label:"Thymine", value:T,  color:C.red},
+      {label:"Guanine", value:G,  color:C.acc},
+      {label:"Cytosine",value:CC, color:C.yel},
+      {label:"Mol.Wt",  value:(A*313.2+T*304.2+G*329.2+CC*289.2).toFixed(0)+" Da", color:C.acc2},
+      {label:"RevComp", value:rc.slice(0,18)+"…", color:C.mut},
+    ]);
+  }
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    
-    let file: File | null = null;
-    if ('files' in e.target && e.target.files) {
-      file = e.target.files[0];
-    } else if ('dataTransfer' in e && e.dataTransfer.files) {
-      file = e.dataTransfer.files[0];
-    }
+  async function runAI() {
+    setBusy(true); setAnswers([]);
+    const msgs=[{role:"user",content:"Analyze this DNA sequence:\n"+seq}];
+    const results = await runAllAIs(msgs,"You are a genomics expert. Analyze DNA sequences with clear biological insights.",()=>{});
+    setAnswers(results); setBusy(false);
+  }
 
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const content = event.target?.result as string;
-        setSequence(content);
-      };
-      reader.readAsText(file);
-    }
-  };
+  function handleFasta(e) {
+    const f=e.target.files[0]; if(!f) return;
+    const reader=new FileReader();
+    reader.onload=ev=>setSeq(ev.target.result.replace(/^>.*$/gm,"").replace(/\s/g,"").slice(0,500));
+    reader.readAsText(f);
+  }
 
-  const downloadResults = () => {
-    if (!analysis) return;
-    const data = JSON.stringify(analysis, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `biosynth-analysis-${Date.now()}.json`;
-    a.click();
-  };
+  return (
+    <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+      <div style={{ display:"flex",gap:8 }}>
+        {[["stats","📊 Stats"],["ai","✦ All AIs"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{ background:tab===id?C.acc:C.card,border:`1.5px solid ${tab===id?C.acc:C.bor}`,borderRadius:8,padding:"8px 16px",color:tab===id?"#fff":C.sub,fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:tab===id?600:400 }}>{label}</button>
+        ))}
+      </div>
+      <Card>
+        <div style={{ display:"flex",justifyContent:"space-between",marginBottom:6 }}>
+          <Lbl text="Input Sequence"/>
+          <button onClick={()=>fileRef.current.click()} style={{ background:C.dim,border:`1px solid ${C.bor}`,borderRadius:6,padding:"3px 10px",color:C.mut,fontSize:11,cursor:"pointer",fontFamily:"monospace" }}>↑ FASTA</button>
+          <input ref={fileRef} type="file" accept=".fasta,.fa,.txt" style={{ display:"none" }} onChange={handleFasta}/>
+        </div>
+        <textarea value={seq} onChange={e=>setSeq(e.target.value)} rows={3} style={{ width:"100%",background:"#fafbfc",border:`1.5px solid ${C.bor2}`,borderRadius:8,padding:12,color:C.code,fontSize:12,fontFamily:"monospace",resize:"vertical" }}/>
+        <div style={{ display:"flex",gap:8,marginTop:10 }}>
+          <Btn onClick={tab==="stats"?calcStats:runAI} disabled={busy}>{busy?"⟳ Analyzing...":"▶ Run "+(tab==="stats"?"Stats":"All 3 AIs")}</Btn>
+          {stats&&<Btn onClick={()=>exportPDF("Stats",stats.map(s=>({label:s.label,color:s.color,text:String(s.value)})))} outline color={C.acc} small>↓ PDF</Btn>}
+          {stats&&<Btn onClick={()=>{const csv="Metric,Value\n"+stats.map(s=>s.label+","+s.value).join("\n");const b=new Blob([csv],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="stats.csv";a.click();}} outline color={C.grn} small>↓ CSV</Btn>}
+        </div>
+      </Card>
+      {tab==="stats"&&stats&&(
+        <Card>
+          <Lbl text="Sequence Statistics" color={C.acc}/>
+          <div style={{ display:"flex",flexWrap:"wrap",gap:10,marginBottom:14 }}>
+            {stats.map((s,i)=>(
+              <div key={i} style={{ background:C.dim,border:`1px solid ${C.bor}`,borderRadius:10,padding:"10px 14px",minWidth:100 }}>
+                <div style={{ color:s.color,fontSize:18,fontFamily:"monospace",fontWeight:700 }}>{s.value}</div>
+                <div style={{ color:C.mut,fontSize:10,marginTop:3,letterSpacing:1 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display:"flex",height:10,borderRadius:5,overflow:"hidden" }}>
+            <div style={{ width:(100-parseFloat(stats[1].value))+"%",background:`linear-gradient(90deg,${C.grn},${C.yel})` }}/>
+            <div style={{ flex:1,background:`linear-gradient(90deg,${C.acc},${C.acc2})` }}/>
+          </div>
+        </Card>
+      )}
+      {tab==="ai"&&answers.length>0&&(
+        <div style={{ display:"flex",flexDirection:"column",gap:10 }}>
+          {answers.filter(r=>P[r.id]).map((r,i)=>{
+            const prov=P[r.id];
+            const isConsensus=r.id==="consensus";
+            return (
+              <Card key={i} style={{ border:`${isConsensus?2:1}px solid ${prov.color}${isConsensus?"88":"33"}`, background:isConsensus?`linear-gradient(135deg,${prov.color}06,#fff)`:C.card }}>
+                <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:10 }}>
+                  <span style={{ color:prov.color,fontSize:16 }}>{prov.icon}</span>
+                  <span style={{ color:prov.color,fontSize:12,fontFamily:"monospace",fontWeight:700 }}>{prov.full}</span>
+                  {isConsensus&&<span style={{ background:prov.color+"20",color:prov.color,fontSize:9,padding:"2px 8px",borderRadius:10,fontFamily:"monospace",fontWeight:700 }}>MAXIMUM ACCURACY</span>}
+                </div>
+                <p style={{ color:C.sub,fontSize:13,lineHeight:1.8,margin:0,fontFamily:"Georgia,serif",whiteSpace:"pre-wrap" }}>{r.text}</p>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── QUALITY CONTROL ───────────────────────────────────────────────
+function QualityControl() {
+  const metrics=[
+    {label:"Total Reads",   value:"248.4M",sub:"paired-end",color:C.acc, pct:98},
+    {label:"Mapping Rate",  value:"99.38%",sub:"to hg38",  color:C.grn, pct:99},
+    {label:"Duplicate Rate",value:"4.21%", sub:"marked",   color:C.yel, pct:42},
+    {label:"Mean Coverage", value:"42.3×", sub:"WGS",      color:C.acc, pct:84},
+    {label:"Q30 Bases",     value:"94.7%", sub:"quality",  color:C.grn, pct:95},
+    {label:"Insert Size",   value:"380 bp",sub:"median",   color:C.acc2,pct:76},
+  ];
+  return (
+    <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
+      <div style={{ display:"flex",gap:10,flexWrap:"wrap" }}>
+        {[["PASS","3,944,211",C.grn],["FAIL","1,900,572",C.red],["TOTAL","5,844,783",C.acc],["Ti/Tv","2.14",C.yel]].map(([l,v,col],i)=>(
+          <Card key={i} style={{ flex:1,minWidth:100,textAlign:"center" }}>
+            <div style={{ color:col,fontSize:20,fontFamily:"monospace",fontWeight:800 }}>{v}</div>
+            <div style={{ color:C.txt,fontSize:11,fontWeight:600,marginTop:4 }}>{l}</div>
+          </Card>
+        ))}
+      </div>
+      {metrics.map((m,i)=>(
+        <Card key={i}>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+            <div><span style={{ color:C.txt,fontSize:13,fontWeight:500 }}>{m.label}</span><span style={{ color:C.mut,fontSize:11,marginLeft:8 }}>{m.sub}</span></div>
+            <span style={{ color:m.color,fontSize:18,fontFamily:"monospace",fontWeight:800 }}>{m.value}</span>
+          </div>
+          <Bar pct={m.pct} color={m.color}/>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ── DATASETS ──────────────────────────────────────────────────────
+function Datasets() {
+  const [q,setQ]=useState("");
+  const [uploaded,setUp]=useState([]);
+  const fileRef=useRef(null);
+  const BASE=[
+    {name:"BRCA1 Genomic Sequences",size:"2.3 GB", fmt:"FASTA",records:"14,821",  sc:C.grn,status:"ready"},
+    {name:"Tumor RNA-seq Matrix",   size:"890 MB", fmt:"CSV",  records:"23,486g", sc:C.grn,status:"ready"},
+    {name:"Patient VCF Variants",   size:"4.1 GB", fmt:"VCF",  records:"5.8M",    sc:C.yel,status:"processing"},
+    {name:"Reference Genome hg38",  size:"3.2 GB", fmt:"FASTA",records:"1 genome",sc:C.grn,status:"ready"},
+    {name:"scRNA-seq Cell Atlas",   size:"12.4 GB",fmt:"H5AD", records:"84,211c", sc:C.grn,status:"ready"},
+    {name:"Protein Structures",     size:"7.8 GB", fmt:"PDB",  records:"2,341",   sc:C.acc,status:"downloading"},
+  ];
+  const DATA=[...BASE,...uploaded].filter(d=>!q||d.name.toLowerCase().includes(q.toLowerCase())||d.fmt.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
+      <div style={{ display:"flex",gap:8 }}>
+        <div style={{ flex:1,position:"relative" }}>
+          <span style={{ position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:C.mut }}>🔍</span>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search datasets..." style={{ width:"100%",background:C.card,border:`1.5px solid ${C.bor2}`,borderRadius:8,padding:"10px 14px 10px 38px",color:C.txt,fontSize:13,fontFamily:"monospace" }}/>
+        </div>
+        <button onClick={()=>fileRef.current.click()} style={{ background:C.acc,border:"none",borderRadius:8,padding:"10px 18px",color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:600 }}>↑ Upload</button>
+        <input ref={fileRef} type="file" accept=".fasta,.fa,.vcf,.csv,.txt" style={{ display:"none" }} onChange={e=>{const f=e.target.files[0];if(f)setUp(p=>[...p,{name:f.name,size:(f.size/1024/1024).toFixed(1)+" MB",fmt:f.name.split(".").pop().toUpperCase(),records:"—",sc:C.grn,status:"ready"}]);}}/>
+      </div>
+      {DATA.map((d,i)=>(
+        <Card key={i} style={{ display:"flex",alignItems:"center",gap:14 }}>
+          <div style={{ width:40,height:40,borderRadius:10,background:C.acc+"12",border:`1px solid ${C.acc}22`,display:"flex",alignItems:"center",justifyContent:"center",color:C.acc,fontSize:13,fontFamily:"monospace",fontWeight:700,flexShrink:0 }}>{d.fmt[0]}</div>
+          <div style={{ flex:1 }}>
+            <div style={{ color:C.txt,fontSize:13,fontWeight:500,marginBottom:6 }}>{d.name}</div>
+            <div style={{ display:"flex",gap:6 }}>{[d.fmt,d.records,d.size].map((t,j)=><span key={j} style={{ background:C.dim,border:`1px solid ${C.bor}`,color:C.mut,fontSize:10,padding:"2px 8px",borderRadius:20,fontFamily:"monospace" }}>{t}</span>)}</div>
+          </div>
+          <div style={{ color:d.sc,fontSize:11,fontFamily:"monospace",fontWeight:600 }}>● {d.status.toUpperCase()}</div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ── NAV ───────────────────────────────────────────────────────────
+const NAV=[
+  {id:"research", label:"AI Research",    icon:"⊞"},
+  {id:"workbench",label:"Workbench",      icon:"⬡"},
+  {id:"qc",       label:"Quality Control",icon:"◎"},
+  {id:"datasets", label:"Datasets",       icon:"◫"},
+];
+
+// ── APP ───────────────────────────────────────────────────────────
+export default function App() {
+  const [user, setUser]         = useState(null);
+  const [authLoading, setAuthL] = useState(true);
+  const [signInLoading, setSL]  = useState(false);
+  const [authError, setAuthErr] = useState("");
+  const [page, setPage]         = useState("research");
+  const [sideOpen, setSideOpen] = useState(true);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
-
-  const handleSend = async () => {
-    if (!input.trim() || isTyping) return;
-
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: input,
-      model: 'researcher',
-      timestamp: Date.now(),
-    };
-
-    setMessages(prev => [...prev, userMsg]);
-    const userPrompt = input;
-    setInput('');
-    setIsTyping(true);
-
-    try {
-      const assistantId = (Date.now() + 1).toString();
-      
-      // Add placeholder assistant message
-      setMessages(prev => [...prev, {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        model: 'consensus',
-        timestamp: Date.now(),
-      }]);
-
-      // Trigger Triple-Agent Consensus for the response
-      const flashAI = getGeminiModel(MODELS.FLASH);
-      const flashPromise = flashAI.models.generateContent({
-        model: MODELS.FLASH,
-        contents: `[AGENT 1] Task: ${userPrompt}. Provide a precise bioinformatics answer.`,
-      }).then(r => r.text || '');
-
-      const proAI = getGeminiModel(MODELS.PRO);
-      const proPromise = proAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `[AGENT 2] Task: ${userPrompt}. Provide a deep research answer.`,
-        config: { tools: [{ googleSearch: {} }] }
-      }).then(r => r.text || '');
-
-      let localPromise: Promise<string>;
-      if (isLocalLoaded) {
-        localPromise = localAI.generate(`[AGENT 3] Task: ${userPrompt}. Provide a verified answer.`);
-      } else {
-        localPromise = Promise.resolve("Local verification active...");
-      }
-
-      const [flashRes, proRes, localRes] = await Promise.all([flashPromise, proPromise, localPromise]);
-
-      // Final Consensus Synthesis
-      const judgeAI = getGeminiModel(MODELS.PRO);
-      const judgeRes = await judgeAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `Synthesize a 100% accurate bioinformatics response for: "${userPrompt}". 
-        Input 1: ${flashRes}
-        Input 2: ${proRes}
-        Input 3: ${localRes}
-        Ensure the final output is comprehensive and verified.`,
-      });
-
-      const finalResponse = judgeRes.text || "Consensus failed. Retrying...";
-      setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: finalResponse } : m));
-
-    } catch (error) {
-      const bioError = handleError(error);
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: `**Consensus Error [${bioError.type}]**: ${bioError.message}`,
-        model: 'system',
-        timestamp: Date.now(),
-      }]);
-    } finally {
-      setIsTyping(false);
-    }
-  };
-
-
-  const handleEditorAI = async (task: 'generate' | 'fix' | 'explain') => {
-    if (isEditorAILoading) return;
-    setIsEditorAILoading(true);
-
-    try {
-      const userPrompt = task === 'generate' ? input : (task === 'fix' ? `Fix this code: ${editorCode}` : `Explain this code: ${editorCode}`);
-      
-      // 1. Triple Agent Debate for Code
-      const flashAI = getGeminiModel(MODELS.FLASH);
-      const flashPromise = flashAI.models.generateContent({
-        model: MODELS.FLASH,
-        contents: `[CODE AGENT 1] Task: ${userPrompt}. Provide optimized code/explanation.`,
-      }).then(r => r.text || '');
-
-      const proAI = getGeminiModel(MODELS.PRO);
-      const proPromise = proAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `[CODE AGENT 2] Task: ${userPrompt}. Provide robust, production-ready code/explanation.`,
-      }).then(r => r.text || '');
-
-      const localPromise = isLocalLoaded 
-        ? localAI.generate(`[CODE AGENT 3] Task: ${userPrompt}. Provide verified code/explanation.`)
-        : Promise.resolve("Local verification active...");
-
-      const [f, p, l] = await Promise.all([flashPromise, proPromise, localPromise]);
-
-      // 2. Consensus Synthesis
-      const judgeAI = getGeminiModel(MODELS.PRO);
-      const judgeRes = await judgeAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `Synthesize the final 100% accurate result for: "${userPrompt}". 
-        Agent 1: ${f}
-        Agent 2: ${p}
-        Agent 3: ${l}
-        ${task === 'explain' ? 'Provide a detailed explanation.' : 'Provide ONLY the final code block.'}`,
-      });
-
-      const response = judgeRes.text || "";
-      
-      if (task === 'explain') {
-        setMessages(prev => [...prev, {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: response,
-          model: 'consensus',
-          timestamp: Date.now(),
-        }]);
-        setActiveTab('chat');
-      } else {
-        const codeMatch = response.match(/```(?:python|r|bash|json)?\n([\s\S]*?)```/);
-        const finalCode = codeMatch ? codeMatch[1] : response;
-        setEditorCode(finalCode);
-      }
-    } catch (error) {
-      const bioError = handleError(error);
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: `**Editor AI Error [${bioError.type}]**: ${bioError.message}`,
-        model: 'system',
-        timestamp: Date.now(),
-      }]);
-    } finally {
-      setIsEditorAILoading(false);
-      setInput('');
-    }
-  };
-
-  const [isWorkbenchAILoading, setIsWorkbenchAILoading] = useState(false);
-  const [workbenchAIResult, setWorkbenchAIResult] = useState<string | null>(null);
-
-  const handleAISequenceAnalysis = async () => {
-    if (!sequence.trim() || isWorkbenchAILoading) return;
-    setIsWorkbenchAILoading(true);
-    setWorkbenchAIResult(null);
-
-    try {
-      const userPrompt = `Analyze this ${analysis?.type || 'biological'} sequence: ${sequence}. Provide functional insights, potential domains, and structural predictions.`;
-      
-      const flashAI = getGeminiModel(MODELS.FLASH);
-      const flashPromise = flashAI.models.generateContent({
-        model: MODELS.FLASH,
-        contents: `[BIO-AGENT 1] Task: ${userPrompt}. Provide rapid functional mapping.`,
-      }).then(r => r.text || '');
-
-      const proAI = getGeminiModel(MODELS.PRO);
-      const proPromise = proAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `[BIO-AGENT 2] Task: ${userPrompt}. Provide deep evolutionary and structural analysis.`,
-        config: { tools: [{ googleSearch: {} }] }
-      }).then(r => r.text || '');
-
-      const localPromise = isLocalLoaded 
-        ? localAI.generate(`[BIO-AGENT 3] Task: ${userPrompt}. Provide secure, verified sequence analysis.`)
-        : Promise.resolve("Local verification active...");
-
-      const [f, p, l] = await Promise.all([flashPromise, proPromise, localPromise]);
-
-      const judgeAI = getGeminiModel(MODELS.PRO);
-      const judgeRes = await judgeAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `Synthesize the final 100% accurate biological analysis for: "${userPrompt}". 
-        Agent 1: ${f}
-        Agent 2: ${p}
-        Agent 3: ${l}
-        Provide a professional, peer-review quality report.`,
-      });
-
-      setWorkbenchAIResult(judgeRes.text || "Analysis failed.");
-    } catch (error) {
-      const bioError = handleError(error);
-      setWorkbenchAIResult(`**Analysis Error [${bioError.type}]**: ${bioError.message}`);
-    } finally {
-      setIsWorkbenchAILoading(false);
-    }
-  };
-
-  const [datasetSearch, setDatasetSearch] = useState('');
-  const [isDatasetAILoading, setIsDatasetAILoading] = useState(false);
-  const [datasetAIResult, setDatasetAIResult] = useState<string | null>(null);
-
-  const handleDatasetAISearch = async () => {
-    if (!datasetSearch.trim() || isDatasetAILoading) return;
-    setIsDatasetAILoading(true);
-    setDatasetAIResult(null);
-
-    try {
-      const userPrompt = `Search and summarize biological datasets related to: "${datasetSearch}". Include links to NCBI, UniProt, or PDB if applicable.`;
-      
-      const flashAI = getGeminiModel(MODELS.FLASH);
-      const flashPromise = flashAI.models.generateContent({
-        model: MODELS.FLASH,
-        contents: `[DATA AGENT 1] Task: ${userPrompt}. Provide rapid dataset indexing.`,
-      }).then(r => r.text || '');
-
-      const proAI = getGeminiModel(MODELS.PRO);
-      const proPromise = proAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `[DATA AGENT 2] Task: ${userPrompt}. Provide deep metadata analysis and cross-database verification.`,
-        config: { tools: [{ googleSearch: {} }] }
-      }).then(r => r.text || '');
-
-      const localPromise = isLocalLoaded 
-        ? localAI.generate(`[DATA AGENT 3] Task: ${userPrompt}. Provide secure dataset verification.`)
-        : Promise.resolve("Local database index active.");
-
-      const [f, p, l] = await Promise.all([flashPromise, proPromise, localPromise]);
-
-      const judgeAI = getGeminiModel(MODELS.PRO);
-      const judgeRes = await judgeAI.models.generateContent({
-        model: MODELS.PRO,
-        contents: `Synthesize the final 100% accurate dataset summary for: "${userPrompt}". 
-        Agent 1: ${f}
-        Agent 2: ${p}
-        Agent 3: ${l}
-        Provide a structured list of relevant datasets with verified accessions.`,
-      });
-
-      setDatasetAIResult(judgeRes.text || "Search failed.");
-    } catch (error) {
-      const bioError = handleError(error);
-      setDatasetAIResult(`**Search Error [${bioError.type}]**: ${bioError.message}`);
-    } finally {
-      setIsDatasetAILoading(false);
-    }
-  };
-
-  const analyzeSequence = () => {
-    const cleanSeq = sequence.replace(/\s/g, '').toUpperCase();
-    if (!cleanSeq) return;
-
-    // Strict DNA check for Workbench
-    const isDNA = /^[ATCG]+$/.test(cleanSeq);
-    
-    if (!isDNA && cleanSeq.length > 0) {
-      const invalidChars = cleanSeq.replace(/[ATCG]/g, '');
-      const uniqueInvalid = Array.from(new Set(invalidChars.split(''))).join(', ');
-      alert(`Sequence Validation Error: The provided sequence contains non-DNA characters (${uniqueInvalid}). BioSynth Workbench currently requires valid DNA sequences (A, T, C, G) for analysis.`);
-      return;
-    }
-
-    const isRNA = /^[AUCG]+$/.test(cleanSeq);
-    
-    let type: 'DNA' | 'RNA' | 'Protein' = 'Protein';
-    if (isDNA) type = 'DNA';
-    else if (isRNA) type = 'RNA';
-
-    const gcCount = (cleanSeq.match(/[GC]/g) || []).length;
-    const gcContent = (gcCount / cleanSeq.length) * 100;
-
-    setAnalysis({
-      sequence: cleanSeq,
-      type,
-      length: cleanSeq.length,
-      gcContent: type !== 'Protein' ? gcContent : undefined,
+    const unsub = onAuthStateChanged(auth, u => {
+      setUser(u); setAuthL(false);
     });
+    return unsub;
+  }, []);
+
+  async function handleSignIn() {
+    setSL(true); setAuthErr("");
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (e) {
+      setAuthErr(e.message);
+    }
+    setSL(false);
+  }
+
+  async function handleSignOut() {
+    await signOut(auth);
+  }
+
+  if (authLoading) return (
+    <div style={{ height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,fontFamily:"monospace",color:C.mut }}>
+      Loading BioSynth AI...
+    </div>
+  );
+
+  if (!user) return <SignInScreen onSignIn={handleSignIn} loading={signInLoading} error={authError}/>;
+
+  const isIDE = false;
+  const PAGES = {
+    research:  <AIResearch user={user}/>,
+    workbench: <Workbench/>,
+    qc:        <QualityControl/>,
+    datasets:  <Datasets/>,
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bio-grid">
+    <div style={{ height:"100vh",display:"flex",background:C.bg,color:C.txt,fontFamily:"'Helvetica Neue',sans-serif",overflow:"hidden" }}>
+      <style>{`
+        *{box-sizing:border-box;margin:0;padding:0}
+        ::-webkit-scrollbar{width:5px;height:5px}
+        ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+        textarea,input{outline:none!important}
+        button{transition:opacity 0.15s}
+        button:hover:not(:disabled){opacity:0.85}
+        @keyframes bup{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+      `}</style>
+
       {/* Sidebar */}
-      <aside className="w-64 border-r border-bio-border bg-bio-card flex flex-col">
-        <div className="p-6 border-bottom border-bio-border flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-bio-accent/20 flex items-center justify-center border border-bio-accent/30">
-            <Dna className="text-bio-accent w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="font-serif font-bold text-xl tracking-tight">BioSynth</h1>
-            <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-mono">Bioinformatics OS</p>
+      <div style={{ width:sideOpen?220:0,background:C.side,borderRight:`1px solid ${C.bor}`,display:"flex",flexDirection:"column",flexShrink:0,overflow:"hidden",transition:"width 0.2s ease",boxShadow:"2px 0 8px rgba(0,0,0,0.04)" }}>
+        <div style={{ padding:"18px 16px",borderBottom:`1px solid ${C.bor}` }}>
+          <div style={{ display:"flex",alignItems:"center",gap:10 }}>
+            <div style={{ width:36,height:36,borderRadius:10,background:C.acc,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:18,boxShadow:"0 2px 8px "+C.acc+"55",flexShrink:0 }}>⬡</div>
+            <div>
+              <div style={{ color:C.txt,fontSize:16,fontWeight:800,letterSpacing:-0.3 }}>BioSynth</div>
+              <div style={{ color:C.mut,fontSize:9,letterSpacing:2,fontFamily:"monospace" }}>BIOINFORMATICS OS</div>
+            </div>
           </div>
         </div>
 
-        <nav className="flex-1 px-4 py-6 space-y-2">
-          <button 
-            onClick={() => setActiveTab('chat')}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group",
-              activeTab === 'chat' ? "bg-bio-accent/10 text-bio-accent border border-bio-accent/20" : "text-zinc-400 hover:bg-zinc-800/50"
-            )}
-          >
-            <Cpu className={cn("w-5 h-5", activeTab === 'chat' ? "text-bio-accent" : "group-hover:text-zinc-200")} />
-            <span className="font-medium">AI Research</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('editor')}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group",
-              activeTab === 'editor' ? "bg-bio-accent/10 text-bio-accent border border-bio-accent/20" : "text-zinc-400 hover:bg-zinc-800/50"
-            )}
-          >
-            <Terminal className={cn("w-5 h-5", activeTab === 'editor' ? "text-bio-accent" : "group-hover:text-zinc-200")} />
-            <span className="font-medium">Bio-IDE</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('workbench')}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group",
-              activeTab === 'workbench' ? "bg-bio-accent/10 text-bio-accent border border-bio-accent/20" : "text-zinc-400 hover:bg-zinc-800/50"
-            )}
-          >
-            <FlaskConical className={cn("w-5 h-5", activeTab === 'workbench' ? "text-bio-accent" : "group-hover:text-zinc-200")} />
-            <span className="font-medium">Workbench</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('qc')}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group",
-              activeTab === 'qc' ? "bg-bio-accent/10 text-bio-accent border border-bio-accent/20" : "text-zinc-400 hover:bg-zinc-800/50"
-            )}
-          >
-            <AlertCircle className={cn("w-5 h-5", activeTab === 'qc' ? "text-bio-accent" : "group-hover:text-zinc-200")} />
-            <span className="font-medium">Quality Control</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('database')}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group",
-              activeTab === 'database' ? "bg-bio-accent/10 text-bio-accent border border-bio-accent/20" : "text-zinc-400 hover:bg-zinc-800/50"
-            )}
-          >
-            <Database className={cn("w-5 h-5", activeTab === 'database' ? "text-bio-accent" : "group-hover:text-zinc-200")} />
-            <span className="font-medium">Datasets</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('deploy')}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group",
-              activeTab === 'deploy' ? "bg-bio-accent/10 text-bio-accent border border-bio-accent/20" : "text-zinc-400 hover:bg-zinc-800/50"
-            )}
-          >
-            <Download className={cn("w-5 h-5", activeTab === 'deploy' ? "text-bio-accent" : "group-hover:text-zinc-200")} />
-            <span className="font-medium">Local Deploy</span>
-          </button>
+        <nav style={{ flex:1,paddingTop:8,overflowY:"auto" }}>
+          {NAV.map(n=>(
+            <div key={n.id} onClick={()=>setPage(n.id)} style={{ display:"flex",alignItems:"center",gap:12,padding:"10px 16px",cursor:"pointer",background:page===n.id?C.acc+"10":"transparent",borderLeft:`3px solid ${page===n.id?C.acc:"transparent"}`,color:page===n.id?C.acc:C.mut,fontSize:14,fontWeight:page===n.id?600:400,transition:"all 0.15s" }}>
+              <span style={{ fontSize:15,fontFamily:"monospace",minWidth:22 }}>{n.icon}</span>
+              <span>{n.label}</span>
+            </div>
+          ))}
         </nav>
 
-        <div className="p-4 mt-auto border-t border-bio-border">
-          <div className="glass-panel p-4 space-y-3 bg-emerald-500/5 border-emerald-500/20">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-tighter text-emerald-500/70 font-mono font-bold">System Status</span>
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+        {/* AI Status */}
+        <div style={{ padding:"12px 16px",borderTop:`1px solid ${C.bor}`,background:C.dim }}>
+          <div style={{ color:C.acc,fontSize:9,letterSpacing:2,fontFamily:"monospace",fontWeight:700,marginBottom:8 }}>AI ENGINES</div>
+          {[["◈","Claude","#d97706"],["◎","GPT-4o","#10b981"],["◇","Gemini","#3b82f6"],["⚖","Validator","#8b5cf6"],["★","Consensus","#ef4444"]].map(([icon,name,color],i)=>(
+            <div key={i} style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4 }}>
+              <span style={{ color,fontSize:12 }}>{icon}</span>
+              <span style={{ color:C.sub,fontSize:10,fontFamily:"monospace",flex:1 }}>{name}</span>
+              <span style={{ color:C.grn,fontSize:10,fontFamily:"monospace" }}>✔</span>
             </div>
-            <div className="space-y-1">
-              <div className="flex justify-between text-[11px] font-mono">
-                <span className="text-zinc-500">Engine</span>
-                <span className="text-emerald-500">Triple-Consensus v3.1</span>
-              </div>
-              <div className="flex justify-between text-[11px] font-mono">
-                <span className="text-zinc-500">Latency</span>
-                <span className="text-emerald-500">24ms</span>
-              </div>
+          ))}
+        </div>
+
+        {/* User */}
+        <div style={{ padding:"12px 16px",borderTop:`1px solid ${C.bor}`,display:"flex",alignItems:"center",gap:10 }}>
+          <img src={user.photoURL||""} alt="" style={{ width:32,height:32,borderRadius:"50%",border:`2px solid ${C.bor}` }} onError={e=>{e.target.style.display="none";}}/>
+          <div style={{ flex:1,minWidth:0 }}>
+            <div style={{ color:C.txt,fontSize:12,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{user.displayName}</div>
+            <div style={{ color:C.mut,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{user.email}</div>
+          </div>
+          <button onClick={handleSignOut} style={{ background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:11,fontFamily:"monospace" }}>Out</button>
+        </div>
+      </div>
+
+      {/* Main */}
+      <div style={{ flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0 }}>
+        <div style={{ height:48,background:C.side,borderBottom:`1px solid ${C.bor}`,display:"flex",alignItems:"center",padding:"0 18px",gap:12,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)" }}>
+          <button onClick={()=>setSideOpen(o=>!o)} style={{ background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:18,padding:4 }}>☰</button>
+          <span style={{ color:C.mut,fontSize:12 }}>BioSynth /</span>
+          <span style={{ color:C.txt,fontSize:12,fontWeight:600 }}>{NAV.find(n=>n.id===page)?.label}</span>
+          <div style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:6 }}>
+            <div style={{ background:C.dim,border:`1px solid ${C.bor}`,borderRadius:20,padding:"5px 12px",display:"flex",alignItems:"center",gap:6 }}>
+              <div style={{ width:6,height:6,borderRadius:"50%",background:C.grn,boxShadow:"0 0 5px "+C.grn }}/>
+              <span style={{ color:C.sub,fontSize:11,fontFamily:"monospace" }}>5 AI engines · temp=0</span>
             </div>
           </div>
         </div>
-      </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 relative">
-        {/* Top Header */}
-        <header className="h-16 border-b border-bio-border bg-bio-card/50 backdrop-blur-xl flex items-center justify-between px-8 shrink-0 z-20">
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-bio-border">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Session: Active</span>
-            </div>
-            <div className="h-4 w-px bg-bio-border" />
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono text-zinc-500 uppercase">Current Task:</span>
-              <span className="text-[10px] font-mono text-emerald-500 uppercase font-bold">
-                {activeTab === 'chat' ? 'AI RESEARCH' : activeTab.toUpperCase()}
-              </span>
-            </div>
-            <div className="h-4 w-px bg-bio-border" />
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-bio-accent/10 border border-bio-accent/20">
-              <ShieldCheck className="w-3 h-3 text-bio-accent" />
-              <span className="text-[10px] font-mono font-bold text-bio-accent uppercase">Triple Consensus Active</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-4">
-              <div className="flex -space-x-2">
-                {[MODELS.FLASH, MODELS.PRO, 'LOCAL'].map((m, i) => (
-                  <div key={i} className="w-6 h-6 rounded-full border-2 border-bio-card bg-zinc-800 flex items-center justify-center" title={m}>
-                    <div className={cn("w-1.5 h-1.5 rounded-full", i === 0 ? "bg-bio-accent" : i === 1 ? "bg-emerald-500" : "bg-blue-500")} />
-                  </div>
-                ))}
-              </div>
-              <span className="text-[10px] font-mono text-zinc-500 uppercase">3 Engines Linked</span>
-            </div>
-            
-            <div className="h-4 w-px bg-bio-border" />
-            
-            <div className="flex items-center gap-3">
-              <button className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 transition-colors">
-                <Settings className="w-5 h-5" />
-              </button>
-              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-bio-accent to-emerald-400 flex items-center justify-center text-bio-bg font-bold text-xs shadow-[0_0_12px_rgba(16,185,129,0.3)]">
-                MV
-              </div>
-            </div>
-          </div>
-        </header>
-        {activeTab === 'chat' && (
-          <>
-            {/* Chat Area */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto p-8 space-y-8 scroll-smooth">
-              {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-8">
-                  <div className="w-20 h-20 rounded-3xl bg-bio-accent/10 flex items-center justify-center border border-bio-accent/20 mb-4">
-                    <Microscope className="w-10 h-10 text-bio-accent" />
-                  </div>
-                  <div className="space-y-4">
-                    <h2 className="text-4xl font-serif font-bold tracking-tight">How can BioSynth assist your research?</h2>
-                    <p className="text-zinc-400 text-lg">
-                      Analyze genomic sequences, predict protein structures, or explore the latest bioinformatics literature with our triple-AI engine.
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 w-full">
-                    {[
-                      { icon: Dna, label: "Analyze DNA Sequence", prompt: "Can you analyze this DNA sequence for potential ORF: ATGCGTACGTAGCTAGCTAGCTAGCTAGCTAG" },
-                      { icon: Search, label: "Literature Search", prompt: "What are the latest breakthroughs in CRISPR-Cas9 delivery systems?" },
-                      { icon: Activity, label: "Protein Folding", prompt: "Explain the principles of AlphaFold 2 and how it predicts protein structures." },
-                      { icon: Terminal, label: "Bio-Python Scripting", prompt: "Write a Python script using Biopython to parse a GenBank file." }
-                    ].map((item, i) => (
-                      <button 
-                        key={i}
-                        onClick={() => setInput(item.prompt)}
-                        className="glass-panel p-4 text-left hover:bg-zinc-800/50 transition-all group flex items-start gap-4"
-                      >
-                        <div className="p-2 rounded-lg bg-zinc-900 text-bio-accent group-hover:scale-110 transition-transform">
-                          <item.icon className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-sm text-zinc-200">{item.label}</p>
-                          <p className="text-[11px] text-zinc-500 mt-1 line-clamp-1">{item.prompt}</p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                messages.map((msg) => (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    key={msg.id} 
-                    className={cn(
-                      "flex gap-6 max-w-4xl",
-                      msg.role === 'user' ? "ml-auto flex-row-reverse" : "mr-auto"
-                    )}
-                  >
-                    <div className={cn(
-                      "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border",
-                      msg.role === 'user' ? "bg-zinc-800 border-zinc-700" : "bg-bio-accent/10 border-bio-accent/20"
-                    )}>
-                      {msg.role === 'user' ? <Zap className="w-5 h-5 text-zinc-400" /> : <Dna className="w-5 h-5 text-bio-accent" />}
-                    </div>
-                    <div className={cn(
-                      "space-y-2",
-                      msg.role === 'user' ? "text-right" : "text-left"
-                    )}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">
-                            {msg.role === 'user' ? 'Researcher' : `${msg.model.toUpperCase()} ENGINE`}
-                          </span>
-                          <span className="text-[10px] text-zinc-600">•</span>
-                          <span className="text-[10px] text-zinc-600">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                        {msg.role === 'assistant' && msg.content && <CopyButton text={msg.content} />}
-                      </div>
-                      <div className={cn(
-                        "p-5 rounded-2xl text-sm leading-relaxed shadow-sm",
-                        msg.role === 'user' ? "bg-bio-accent text-bio-bg font-medium" : "bg-zinc-900/50 border border-bio-border text-zinc-300"
-                      )}>
-                        <div className="markdown-body prose prose-invert prose-sm max-w-none">
-                          <Markdown>{msg.content}</Markdown>
-                        </div>
-                        {msg.role === 'assistant' && msg.content === '' && (
-                          <div className="flex gap-1 py-2">
-                            <div className="w-1.5 h-1.5 bg-bio-accent rounded-full animate-bounce [animation-delay:-0.3s]" />
-                            <div className="w-1.5 h-1.5 bg-bio-accent rounded-full animate-bounce [animation-delay:-0.15s]" />
-                            <div className="w-1.5 h-1.5 bg-bio-accent rounded-full animate-bounce" />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
-                ))
-              )}
-            </div>
-
-            {/* Input Area */}
-            <div className="p-8 pt-0">
-              <div className="max-w-4xl mx-auto relative">
-                <AnimatePresence>
-                  {localProgress && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      className="absolute bottom-full mb-4 left-0 right-0 glass-panel p-4 flex items-center gap-4 border-bio-accent/30"
-                    >
-                      <Loader2 className="w-5 h-5 text-bio-accent animate-spin" />
-                      <div className="flex-1">
-                        <p className="text-xs font-medium text-bio-accent">Initializing Local AI Engine...</p>
-                        <p className="text-[10px] text-zinc-500 font-mono mt-1">{localProgress}</p>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <div className="glass-panel p-2 flex items-end gap-2 focus-within:border-bio-accent/50 transition-colors">
-                  <textarea 
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSend();
-                      }
-                    }}
-                    placeholder={selectedModel === 'local' ? "Ask the local model (runs in browser)..." : "Ask BioSynth anything about bioinformatics..."}
-                    className="flex-1 bg-transparent border-none focus:ring-0 text-sm py-3 px-4 resize-none min-h-[50px] max-h-[200px]"
-                    rows={1}
-                  />
-                  <div className="flex items-center gap-2 pb-2 pr-2">
-                    <button className="p-2 text-zinc-500 hover:text-zinc-300 transition-colors">
-                      <Download className="w-5 h-5" />
-                    </button>
-                    <button 
-                      onClick={handleSend}
-                      disabled={!input.trim() || isTyping}
-                      className={cn(
-                        "p-3 rounded-xl transition-all",
-                        input.trim() && !isTyping ? "bg-bio-accent text-bio-bg shadow-lg hover:scale-105" : "bg-zinc-800 text-zinc-600"
-                      )}
-                    >
-                      <Send className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-3 flex items-center justify-between px-2">
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">
-                      <Terminal className="w-3 h-3" />
-                      <span>CMD + ENTER TO SEND</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">
-                      <Info className="w-3 h-3" />
-                      <span>{selectedModel === 'local' ? 'LOCAL MODE: NO DATA LEAVES BROWSER' : 'CLOUD MODE: POWERED BY GEMINI'}</span>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => setMessages([])}
-                    className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1 font-mono"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    CLEAR SESSION
-                  </button>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-
-        {activeTab === 'editor' && (
-          <div className="flex-1 flex flex-col overflow-hidden bg-[#1e1e1e]">
-            {/* VS Code Style Header */}
-            <header className="h-10 bg-[#2d2d2d] flex items-center justify-between px-4 border-b border-[#1e1e1e]">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Terminal className="w-4 h-4 text-bio-accent" />
-                  <span className="text-xs font-medium text-zinc-400">BioSynth IDE</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button className="px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 rounded transition-colors">File</button>
-                  <button className="px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 rounded transition-colors">Edit</button>
-                  <button className="px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 rounded transition-colors">Selection</button>
-                  <button className="px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 rounded transition-colors">View</button>
-                  <button className="px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 rounded transition-colors">Go</button>
-                  <button className="px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 rounded transition-colors">Run</button>
-                  <button className="px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 rounded transition-colors">Terminal</button>
-                  <button className="px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 rounded transition-colors">Help</button>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <select 
-                  value={editorLanguage}
-                  onChange={(e) => setEditorLanguage(e.target.value)}
-                  className="bg-[#3c3c3c] text-[10px] text-zinc-300 border-none rounded px-2 py-0.5 focus:ring-0"
-                >
-                  <option value="python">Python</option>
-                  <option value="r">R</option>
-                  <option value="bash">Bash</option>
-                  <option value="json">JSON</option>
-                </select>
-                <div className="h-4 w-[1px] bg-zinc-700 mx-2" />
-                <button className="p-1.5 text-zinc-400 hover:text-bio-accent hover:bg-zinc-700 rounded transition-colors">
-                  <Activity className="w-4 h-4" />
-                </button>
-              </div>
-            </header>
-
-            <div className="flex-1 flex overflow-hidden">
-              {/* File Explorer Simulation */}
-              <aside className="w-48 bg-[#252526] border-r border-[#1e1e1e] flex flex-col shrink-0">
-                <div className="p-3 flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Explorer</span>
-                  <div className="flex gap-1">
-                    <button className="p-1 hover:bg-zinc-700 rounded"><Search className="w-3 h-3 text-zinc-500" /></button>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto">
-                  <div className="px-4 py-1 flex items-center gap-2 hover:bg-zinc-800 cursor-pointer group">
-                    <ChevronRight className="w-3 h-3 text-zinc-500" />
-                    <span className="text-xs text-zinc-400">SCRIPTS</span>
-                  </div>
-                  <div className="pl-8 py-1 flex items-center gap-2 bg-[#37373d] cursor-pointer">
-                    <Terminal className="w-3 h-3 text-bio-accent" />
-                    <span className="text-xs text-zinc-200">main.py</span>
-                  </div>
-                  <div className="pl-8 py-1 flex items-center gap-2 hover:bg-zinc-800 cursor-pointer">
-                    <Database className="w-3 h-3 text-zinc-500" />
-                    <span className="text-xs text-zinc-400">data.vcf</span>
-                  </div>
-                  <div className="pl-8 py-1 flex items-center gap-2 hover:bg-zinc-800 cursor-pointer">
-                    <Dna className="w-3 h-3 text-zinc-500" />
-                    <span className="text-xs text-zinc-400">genome.fasta</span>
-                  </div>
-                </div>
-              </aside>
-
-              {/* Editor Area */}
-              <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Tabs */}
-                <div className="h-9 bg-[#252526] flex items-center justify-between pr-4">
-                  <div className="flex h-full">
-                    <div className="h-full px-4 bg-[#1e1e1e] border-t border-bio-accent flex items-center gap-2">
-                      <Terminal className="w-3 h-3 text-bio-accent" />
-                      <span className="text-xs text-zinc-200">main.py</span>
-                      <button className="p-0.5 hover:bg-zinc-700 rounded ml-2"><Trash2 className="w-3 h-3 text-zinc-500" /></button>
-                    </div>
-                  </div>
-                  <CopyButton text={editorCode} />
-                </div>
-
-                <div className="flex-1 relative">
-                  <Editor
-                    height="100%"
-                    language={editorLanguage}
-                    theme={editorTheme}
-                    value={editorCode}
-                    onChange={(value) => setEditorCode(value || '')}
-                    options={{
-                      fontSize: 14,
-                      fontFamily: "'JetBrains Mono', monospace",
-                      minimap: { enabled: true },
-                      scrollBeyondLastLine: false,
-                      automaticLayout: true,
-                      padding: { top: 20 },
-                      lineNumbers: 'on',
-                      glyphMargin: true,
-                      folding: true,
-                      lineDecorationsWidth: 10,
-                      lineNumbersMinChars: 3,
-                    }}
-                  />
-                  
-                  {/* AI Copilot Overlay */}
-                  <div className="absolute bottom-6 right-6 flex flex-col gap-2">
-                    <AnimatePresence>
-                      {isEditorAILoading && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.9 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.9 }}
-                          className="glass-panel p-3 bg-bio-accent/10 border-bio-accent/30 flex items-center gap-3 mb-2"
-                        >
-                          <Loader2 className="w-4 h-4 text-bio-accent animate-spin" />
-                          <span className="text-xs text-bio-accent font-medium">AI Copilot is thinking...</span>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                    
-                    <div className="glass-panel p-2 flex gap-2 bg-[#252526]/90 backdrop-blur-md border-[#3c3c3c]">
-                      <button 
-                        onClick={() => handleEditorAI('fix')}
-                        className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-[10px] font-bold text-zinc-300 flex items-center gap-1.5 transition-colors"
-                      >
-                        <ShieldCheck className="w-3 h-3 text-bio-accent" />
-                        FIX BUGS
-                      </button>
-                      <button 
-                        onClick={() => handleEditorAI('explain')}
-                        className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-[10px] font-bold text-zinc-300 flex items-center gap-1.5 transition-colors"
-                      >
-                        <Info className="w-3 h-3 text-bio-accent" />
-                        EXPLAIN
-                      </button>
-                      <div className="h-6 w-[1px] bg-zinc-700 mx-1" />
-                      <div className="flex items-center gap-2 bg-zinc-900 rounded px-2 py-1">
-                        <input 
-                          value={input}
-                          onChange={(e) => setInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleEditorAI('generate');
-                          }}
-                          placeholder="Ask AI to generate code..."
-                          className="bg-transparent border-none focus:ring-0 text-[10px] text-zinc-300 w-48 py-0"
-                        />
-                        <button 
-                          onClick={() => handleEditorAI('generate')}
-                          className="p-1 hover:bg-zinc-800 rounded text-bio-accent"
-                        >
-                          <Send className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Terminal Simulation */}
-                <div className="h-48 bg-[#1e1e1e] border-t border-[#333] flex flex-col">
-                  <div className="h-9 bg-[#1e1e1e] flex items-center px-4 gap-6 border-b border-[#333]">
-                    <button className="text-[10px] font-bold text-zinc-200 border-b-2 border-bio-accent h-full px-2">TERMINAL</button>
-                    <button className="text-[10px] font-bold text-zinc-500 hover:text-zinc-300 h-full px-2">OUTPUT</button>
-                    <button className="text-[10px] font-bold text-zinc-500 hover:text-zinc-300 h-full px-2">DEBUG CONSOLE</button>
-                    <button className="text-[10px] font-bold text-zinc-500 hover:text-zinc-300 h-full px-2">PROBLEMS</button>
-                  </div>
-                  <div className="flex-1 p-4 font-mono text-[11px] text-zinc-400 overflow-y-auto">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-bio-accent">biosynth@research:~$</span>
-                      <span className="text-zinc-200">python main.py --input data.vcf</span>
-                    </div>
-                    <div className="text-zinc-500">Initializing BioSynth Neural Engine...</div>
-                    <div className="text-zinc-500">Loading genomic reference hg38...</div>
-                    <div className="text-emerald-500">Analysis complete. Found 42 high-impact variants.</div>
-                    <div className="flex items-center gap-2 mt-2">
-                      <span className="text-bio-accent">biosynth@research:~$</span>
-                      <span className="w-2 h-4 bg-zinc-600 animate-pulse" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-
-        {activeTab === 'workbench' && (
-          <div className="flex-1 p-8 overflow-y-auto">
-            <div className="max-w-5xl mx-auto space-y-8">
-              <header className="space-y-2">
-                <h2 className="text-3xl font-serif font-bold tracking-tight">Sequence Workbench</h2>
-                <p className="text-zinc-400">Perform real-time analysis on DNA, RNA, and Protein sequences.</p>
-              </header>
-
-              <div className="grid grid-cols-3 gap-8">
-                <div className="col-span-2 space-y-6">
-                  <div className="glass-panel p-6 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-mono uppercase tracking-widest text-zinc-500">Input Sequence</label>
-                      <div className="flex gap-2">
-                        <button onClick={() => setSequence('ATGCGTACGTAGCTAGCTAGCTAGCTAGCTAG')} className="text-[10px] bg-zinc-800 px-2 py-1 rounded hover:bg-zinc-700 transition-colors">Sample DNA</button>
-                        <button onClick={() => setSequence('MAVMAPRTLLLLLSGALALTQTWAGSHSMRYF')} className="text-[10px] bg-zinc-800 px-2 py-1 rounded hover:bg-zinc-700 transition-colors">Sample Protein</button>
-                      </div>
-                    </div>
-                    
-                    <div 
-                      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                      onDragLeave={() => setIsDragging(false)}
-                      onDrop={handleFileUpload}
-                      className={cn(
-                        "relative w-full h-48 bg-zinc-900/50 border-2 border-dashed rounded-xl transition-all group",
-                        isDragging ? "border-bio-accent bg-bio-accent/5" : "border-bio-border hover:border-zinc-700"
-                      )}
-                    >
-                      <textarea 
-                        value={sequence}
-                        onChange={(e) => setSequence(e.target.value)}
-                        placeholder="Paste your sequence here or drag and drop a file..."
-                        className="w-full h-full bg-transparent border-none focus:ring-0 p-4 font-mono text-sm resize-none"
-                      />
-                      {!sequence && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-50 group-hover:opacity-100 transition-opacity">
-                          <Download className="w-8 h-8 mb-2 text-zinc-600" />
-                          <p className="text-xs font-mono">DRAP & DROP FASTA/TXT FILE</p>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex gap-4">
-                      <label className="flex-1">
-                        <input type="file" className="hidden" onChange={handleFileUpload} />
-                        <div className="w-full py-3 bg-zinc-800 text-zinc-300 font-bold rounded-xl hover:bg-zinc-700 transition-colors flex items-center justify-center gap-2 cursor-pointer">
-                          <Download className="w-5 h-5" />
-                          UPLOAD FILE
-                        </div>
-                      </label>
-                      <button 
-                        onClick={analyzeSequence}
-                        className="flex-1 py-3 bg-zinc-800 text-zinc-300 font-bold rounded-xl hover:bg-zinc-700 transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Activity className="w-5 h-5" />
-                        RUN ANALYSIS
-                      </button>
-                      <button 
-                        onClick={handleAISequenceAnalysis}
-                        disabled={isWorkbenchAILoading || !sequence.trim()}
-                        className="flex-1 py-3 bg-bio-accent text-bio-bg font-bold rounded-xl hover:opacity-90 transition-opacity flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:bg-zinc-800 disabled:text-zinc-600 disabled:shadow-none"
-                      >
-                        {isWorkbenchAILoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
-                        AI CONSENSUS
-                      </button>
-                    </div>
-                  </div>
-
-                  {analysis && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="glass-panel p-6 space-y-6"
-                    >
-                      <div className="flex items-center justify-between border-b border-bio-border pb-4">
-                        <h3 className="font-serif font-bold text-xl">Analysis Results</h3>
-                        <div className="flex gap-2">
-                          <CopyButton text={analysis.sequence} />
-                          <button 
-                            onClick={downloadResults}
-                            className="flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-[10px] font-mono hover:bg-zinc-700 transition-colors"
-                          >
-                            <Download className="w-3 h-3" />
-                            DOWNLOAD JSON
-                          </button>
-                          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-bio-accent/10 border border-bio-accent/20">
-                            <span className="text-[10px] font-mono font-bold text-bio-accent uppercase">{analysis.type} DETECTED</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="p-4 bg-zinc-900/50 rounded-xl border border-bio-border">
-                          <p className="text-[10px] text-zinc-500 font-mono uppercase mb-1">Length</p>
-                          <p className="text-2xl font-bold">{analysis.length} <span className="text-xs font-normal text-zinc-500">bp/aa</span></p>
-                        </div>
-                        {analysis.gcContent !== undefined && (
-                          <div className="p-4 bg-zinc-900/50 rounded-xl border border-bio-border">
-                            <p className="text-[10px] text-zinc-500 font-mono uppercase mb-1">GC Content</p>
-                            <p className="text-2xl font-bold">{analysis.gcContent.toFixed(2)}%</p>
-                          </div>
-                        )}
-                        <div className="p-4 bg-zinc-900/50 rounded-xl border border-bio-border">
-                          <p className="text-[10px] text-zinc-500 font-mono uppercase mb-1">Molecular Weight</p>
-                          <p className="text-2xl font-bold">~{(analysis.length * 0.11).toFixed(1)} <span className="text-xs font-normal text-zinc-500">kDa</span></p>
-                        </div>
-                      </div>
-
-                      {workbenchAIResult && (
-                        <div className="p-6 bg-bio-accent/5 border border-bio-accent/20 rounded-xl space-y-4 relative overflow-hidden">
-                          <div className="absolute top-0 right-0 p-2 opacity-10">
-                            <Zap className="w-12 h-12 text-bio-accent" />
-                          </div>
-                          <div className="flex items-center gap-2 text-[10px] font-mono font-bold text-bio-accent uppercase tracking-widest">
-                            <ShieldCheck className="w-3 h-3" />
-                            Triple AI Consensus Verdict
-                          </div>
-                          <div className="markdown-body prose prose-invert prose-emerald max-w-none text-sm">
-                            <Markdown>{workbenchAIResult}</Markdown>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="space-y-2">
-                        <p className="text-[10px] text-zinc-500 font-mono uppercase">Formatted Sequence</p>
-                        <div className="p-4 bg-zinc-900/80 rounded-xl font-mono text-xs break-all leading-relaxed border border-bio-border">
-                          {analysis.sequence.match(/.{1,10}/g)?.map((chunk, i) => (
-                            <span key={i} className={cn(i % 2 === 0 ? "text-bio-accent" : "text-zinc-400", "mr-2")}>
-                              {chunk}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-                </div>
-
-                <div className="space-y-6">
-                  <div className="glass-panel p-6 space-y-4">
-                    <h3 className="font-serif font-bold text-lg">Quick Tools</h3>
-                    <div className="space-y-2">
-                      {[
-                        { label: "Reverse Complement", icon: ChevronRight },
-                        { label: "Translate to Protein", icon: ChevronRight },
-                        { label: "Calculate Melting Temp", icon: ChevronRight },
-                        { label: "BLAST Search", icon: Search },
-                      ].map((tool, i) => (
-                        <button key={i} className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-zinc-800 transition-colors text-sm text-zinc-300 group">
-                          <span>{tool.label}</span>
-                          <div className="text-zinc-600 group-hover:text-bio-accent transition-colors">
-                            <tool.icon className="w-4 h-4" />
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="glass-panel p-6 bg-bio-accent/5 border-bio-accent/20">
-                    <div className="flex items-center gap-3 mb-4">
-                      <ShieldCheck className="text-bio-accent w-6 h-6" />
-                      <h3 className="font-serif font-bold text-lg">AI Integration</h3>
-                    </div>
-                    <p className="text-xs text-zinc-400 leading-relaxed mb-4">
-                      Send this sequence to our AI models for deep structural prediction or functional annotation.
-                    </p>
-                    <button 
-                      onClick={() => {
-                        setInput(`Analyze this ${analysis?.type || 'sequence'}: ${sequence}`);
-                        setActiveTab('chat');
-                      }}
-                      className="w-full py-2 bg-zinc-900 border border-bio-border rounded-lg text-[11px] font-bold uppercase tracking-widest hover:bg-zinc-800 transition-colors"
-                    >
-                      SEND TO AI ENGINE
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'deploy' && (
-          <div className="flex-1 p-8 overflow-y-auto">
-            <div className="max-w-5xl mx-auto space-y-12 pb-20">
-              <header className="space-y-4">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-bio-accent/10 border border-bio-accent/20 text-bio-accent text-[10px] font-mono font-bold uppercase tracking-widest">
-                  Enterprise Deployment
-                </div>
-                <h2 className="text-4xl font-serif font-bold tracking-tight">Local AI Deployment</h2>
-                <p className="text-zinc-400 text-lg max-w-2xl">
-                  Deploy BioSynth's triple-AI engine on your own infrastructure for maximum privacy, speed, and offline availability.
-                </p>
-              </header>
-
-              <div className="grid grid-cols-3 gap-8">
-                {[
-                  { 
-                    title: "Gemini Flash Edge", 
-                    desc: "Lightweight inference for sequence processing.", 
-                    specs: "8GB RAM | CPU/GPU",
-                    file: "biosynth-flash-v1.tar.gz"
-                  },
-                  { 
-                    title: "Gemini Pro Research", 
-                    desc: "Full-scale model for complex molecular reasoning.", 
-                    specs: "24GB VRAM | NVIDIA A100/L4",
-                    file: "biosynth-pro-v3.tar.gz"
-                  },
-                  { 
-                    title: "Llama-3 Bio-Local", 
-                    desc: "Open-source fine-tuned model for bioinformatics.", 
-                    specs: "16GB RAM | Apple M-Series/NVIDIA",
-                    file: "llama3-bio-q4.gguf"
-                  }
-                ].map((model, i) => (
-                  <div key={i} className="glass-panel p-6 flex flex-col group">
-                    <div className="w-12 h-12 rounded-xl bg-zinc-900 border border-bio-border flex items-center justify-center mb-6 group-hover:border-bio-accent/50 transition-colors">
-                      <Cpu className="w-6 h-6 text-bio-accent" />
-                    </div>
-                    <h3 className="text-xl font-serif font-bold mb-2">{model.title}</h3>
-                    <p className="text-sm text-zinc-500 mb-6 flex-1">{model.desc}</p>
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between text-[10px] font-mono text-zinc-600">
-                        <span>MIN. SPECS</span>
-                        <span>{model.specs}</span>
-                      </div>
-                      <button className="w-full py-3 bg-zinc-800 hover:bg-bio-accent hover:text-bio-bg transition-all rounded-xl font-bold text-xs flex items-center justify-center gap-2">
-                        <Download className="w-4 h-4" />
-                        DOWNLOAD MODEL
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-8">
-                <h3 className="text-2xl font-serif font-bold border-b border-bio-border pb-4">Quick Start Guide</h3>
-                
-                <div className="space-y-6">
-                  <div className="space-y-4">
-                    <h4 className="flex items-center gap-2 font-bold text-zinc-200">
-                      <div className="w-6 h-6 rounded-full bg-bio-accent text-bio-bg flex items-center justify-center text-[10px] font-mono">01</div>
-                      Environment Setup
-                    </h4>
-                    <p className="text-sm text-zinc-400">Install the BioSynth CLI and required dependencies using Python 3.10+.</p>
-                    <div className="bg-zinc-900/80 rounded-xl p-4 border border-bio-border font-mono text-xs text-bio-accent relative group">
-                      <pre><code>{`pip install biosynth-ai torch transformers
-biosynth init --api-key YOUR_KEY`}</code></pre>
-                      <button className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-zinc-800 rounded">
-                        <Download className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <h4 className="flex items-center gap-2 font-bold text-zinc-200">
-                      <div className="w-6 h-6 rounded-full bg-bio-accent text-bio-bg flex items-center justify-center text-[10px] font-mono">02</div>
-                      Inference Script
-                    </h4>
-                    <p className="text-sm text-zinc-400">Use this Python example to run local sequence analysis.</p>
-                    <div className="bg-zinc-900/80 rounded-xl p-4 border border-bio-border font-mono text-xs text-zinc-400 relative group">
-                      <pre><code>{`from biosynth import BioEngine
-
-# Load local model
-engine = BioEngine.load_local("llama3-bio-q4")
-
-# Analyze sequence
-sequence = "ATGCGTACGTAGCTAGCTAG"
-result = engine.analyze(sequence, task="orf_detection")
-
-print(f"Found ORF at: {result.orf_start}")`}</code></pre>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="glass-panel p-8 bg-gradient-to-br from-bio-accent/5 to-transparent border-bio-accent/20">
-                <div className="flex items-start gap-6">
-                  <div className="p-4 rounded-2xl bg-bio-accent/10 border border-bio-accent/20">
-                    <ShieldCheck className="w-8 h-8 text-bio-accent" />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-xl font-serif font-bold">Enterprise Security</h3>
-                    <p className="text-sm text-zinc-400 max-w-xl">
-                      Local deployment ensures your proprietary genomic data never leaves your internal network. All models are optimized for air-gapped environments.
-                    </p>
-                    <div className="pt-4 flex gap-4">
-                      <button className="text-xs font-bold text-bio-accent hover:underline">READ SECURITY WHITE-PAPER</button>
-                      <button className="text-xs font-bold text-bio-accent hover:underline">CONTACT SUPPORT</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'qc' && (
-          <div className="flex-1 p-8 overflow-y-auto">
-            <div className="max-w-6xl mx-auto space-y-8">
-              <header className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <h2 className="text-3xl font-serif font-bold tracking-tight">High-Throughput Quality Control</h2>
-                  <p className="text-zinc-400">Scan large-scale genomic datasets for errors, artifacts, and anomalies.</p>
-                </div>
-                <button 
-                  onClick={runQCScan}
-                  disabled={qcData.isScanning}
-                  className={cn(
-                    "px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all",
-                    qcData.isScanning ? "bg-zinc-800 text-zinc-500" : "bg-bio-accent text-bio-bg shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:scale-105"
-                  )}
-                >
-                  {qcData.isScanning ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
-                  {qcData.isScanning ? 'SCANNING BILLION DATA...' : 'INITIATE BILLION-POINT SCAN'}
-                </button>
-              </header>
-
-              <div className="grid grid-cols-4 gap-6">
-                <div className="glass-panel p-6 space-y-2">
-                  <p className="text-[10px] font-mono text-zinc-500 uppercase">Data Points Analyzed</p>
-                  <p className="text-2xl font-bold font-mono">
-                    {qcData.summary ? (qcData.summary.totalPoints / 1000000000).toFixed(1) + 'B' : '0.0B'}
-                  </p>
-                </div>
-                <div className="glass-panel p-6 space-y-2">
-                  <p className="text-[10px] font-mono text-zinc-500 uppercase">Anomalies Detected</p>
-                  <p className="text-2xl font-bold font-mono text-red-500">
-                    {qcData.summary ? qcData.summary.errorsFound.toLocaleString() : '0'}
-                  </p>
-                </div>
-                <div className="glass-panel p-6 space-y-2">
-                  <p className="text-[10px] font-mono text-zinc-500 uppercase">Confidence Score</p>
-                  <p className="text-2xl font-bold font-mono text-emerald-500">
-                    {qcData.summary ? qcData.summary.accuracy.toFixed(3) + '%' : '0.000%'}
-                  </p>
-                </div>
-                <div className="glass-panel p-6 space-y-2">
-                  <p className="text-[10px] font-mono text-zinc-500 uppercase">Scan Velocity</p>
-                  <p className="text-2xl font-bold font-mono text-blue-500">
-                    {qcData.summary ? qcData.summary.scanTime : '0.00s'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="glass-panel p-8 space-y-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <BarChart3 className="w-5 h-5 text-bio-accent" />
-                    <h3 className="font-serif font-bold text-xl">Error Density Distribution</h3>
-                  </div>
-                  <div className="flex items-center gap-4 text-[10px] font-mono text-zinc-500">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-red-500" />
-                      <span>HIGH RISK</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-yellow-500" />
-                      <span>MODERATE</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span>OPTIMAL</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="h-[400px] w-full">
-                  {qcData.points.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={qcData.points}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                        <XAxis 
-                          dataKey="pos" 
-                          stroke="#52525b" 
-                          fontSize={10} 
-                          tickFormatter={(val) => (val / 1000000).toFixed(0) + 'M'}
-                        />
-                        <YAxis stroke="#52525b" fontSize={10} />
-                        <RechartsTooltip 
-                          contentStyle={{ backgroundColor: '#161618', border: '1px solid #27272a', borderRadius: '8px' }}
-                          itemStyle={{ fontSize: '12px' }}
-                        />
-                        <Bar dataKey="density" radius={[4, 4, 0, 0]}>
-                          {qcData.points.map((entry, index) => (
-                            <Cell 
-                              key={`cell-${index}`} 
-                              fill={entry.density > 70 ? '#ef4444' : entry.density > 40 ? '#f59e0b' : '#10b981'} 
-                            />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center border-2 border-dashed border-bio-border rounded-xl text-zinc-600 space-y-4">
-                      <ShieldAlert className="w-12 h-12 opacity-20" />
-                      <p className="text-sm font-mono uppercase tracking-widest">No Scan Data Available</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-8">
-                <div className="glass-panel p-6 space-y-4">
-                  <div className="flex items-center gap-3 border-b border-bio-border pb-4">
-                    <History className="w-5 h-5 text-zinc-400" />
-                    <h3 className="font-serif font-bold text-lg">Recent Anomalies</h3>
-                  </div>
-                  <div className="space-y-3">
-                    {qcData.summary ? (
-                      [1, 2, 3, 4].map((i) => (
-                        <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-zinc-900/50 border border-bio-border">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded bg-red-500/10 flex items-center justify-center text-red-500">
-                              <ShieldAlert className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <p className="text-xs font-bold">Structural Variant Detected</p>
-                              <p className="text-[10px] font-mono text-zinc-500">Chr{Math.floor(Math.random() * 22) + 1}:{Math.floor(Math.random() * 1000000)}</p>
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">CRITICAL</span>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-center py-8 text-zinc-600 text-sm italic">Run scan to populate results</p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="glass-panel p-6 space-y-4">
-                  <div className="flex items-center gap-3 border-b border-bio-border pb-4">
-                    <Settings className="w-5 h-5 text-zinc-400" />
-                    <h3 className="font-serif font-bold text-lg">Validation Parameters</h3>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-[10px] font-mono uppercase">
-                        <span className="text-zinc-500">Sensitivity Threshold</span>
-                        <span className="text-bio-accent">85%</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
-                        <div className="h-full bg-bio-accent w-[85%]" />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-[10px] font-mono uppercase">
-                        <span className="text-zinc-500">False Discovery Rate (FDR)</span>
-                        <span className="text-blue-500">0.05%</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 w-[5%]" />
-                      </div>
-                    </div>
-                    <div className="pt-4 grid grid-cols-2 gap-3">
-                      <div className="p-3 rounded-lg border border-bio-border bg-zinc-900/30">
-                        <p className="text-[10px] font-mono text-zinc-500 uppercase">Engine</p>
-                        <p className="text-xs font-bold">BioSynth-HTV v2.1</p>
-                      </div>
-                      <div className="p-3 rounded-lg border border-bio-border bg-zinc-900/30">
-                        <p className="text-[10px] font-mono text-zinc-500 uppercase">Mode</p>
-                        <p className="text-xs font-bold">Deep Validation</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'database' && (
-          <div className="flex-1 p-8 overflow-y-auto">
-            <div className="max-w-5xl mx-auto space-y-8">
-              <header className="space-y-2">
-                <h2 className="text-3xl font-serif font-bold tracking-tight">Public Datasets</h2>
-                <p className="text-zinc-400">Query global biological repositories with Triple AI Consensus verification.</p>
-              </header>
-
-              <div className="glass-panel p-6 space-y-6">
-                <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
-                  <input 
-                    type="text"
-                    value={datasetSearch}
-                    onChange={(e) => setDatasetSearch(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleDatasetAISearch()}
-                    placeholder="Search for genomic, proteomic, or structural datasets (e.g., 'BRCA1 mutations', 'SARS-CoV-2 spike protein')..."
-                    className="w-full bg-zinc-900 border border-bio-border rounded-xl py-4 pl-12 pr-32 focus:ring-2 focus:ring-bio-accent/50 focus:border-bio-accent transition-all text-sm"
-                  />
-                  <button 
-                    onClick={handleDatasetAISearch}
-                    disabled={isDatasetAILoading || !datasetSearch.trim()}
-                    className="absolute right-2 top-2 bottom-2 px-6 bg-bio-accent text-bio-bg font-bold rounded-lg hover:opacity-90 transition-opacity disabled:bg-zinc-800 disabled:text-zinc-600 flex items-center gap-2"
-                  >
-                    {isDatasetAILoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
-                    AI SEARCH
-                  </button>
-                </div>
-
-                {datasetAIResult && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="p-8 bg-bio-accent/5 border border-bio-accent/20 rounded-xl space-y-6 relative"
-                  >
-                    <div className="flex items-center justify-between border-b border-bio-border pb-4">
-                      <div className="flex items-center gap-3">
-                        <ShieldCheck className="w-5 h-5 text-bio-accent" />
-                        <h3 className="font-serif font-bold text-xl">Consensus Search Results</h3>
-                      </div>
-                      <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-bio-accent/10 border border-bio-accent/20">
-                        <div className="w-1.5 h-1.5 rounded-full bg-bio-accent animate-pulse" />
-                        <span className="text-[10px] font-mono font-bold text-bio-accent uppercase">Verified by 3 Engines</span>
-                      </div>
-                    </div>
-                    <div className="markdown-body prose prose-invert prose-emerald max-w-none">
-                      <Markdown>{datasetAIResult}</Markdown>
-                    </div>
-                  </motion.div>
-                )}
-
-                <div className="grid grid-cols-3 gap-6">
-                  {[
-                    { name: "NCBI GenBank", desc: "Genetic sequence database", count: "240M+ sequences" },
-                    { name: "UniProt", desc: "Protein sequence and functional info", count: "220M+ entries" },
-                    { name: "PDB", desc: "3D structural data of proteins/nucleic acids", count: "200k+ structures" }
-                  ].map((db, i) => (
-                    <div key={i} className="p-4 rounded-xl border border-bio-border bg-zinc-900/30 hover:bg-zinc-900/50 transition-colors cursor-pointer group">
-                      <h4 className="font-bold text-zinc-200 group-hover:text-bio-accent transition-colors">{db.name}</h4>
-                      <p className="text-xs text-zinc-500 mb-2">{db.desc}</p>
-                      <p className="text-[10px] font-mono text-zinc-600 uppercase">{db.count}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
+        <div style={{ flex:1,overflowY:"auto",padding:24 }}>
+          <div style={{ maxWidth:900,margin:"0 auto" }}>{PAGES[page]}</div>
+        </div>
+      </div>
     </div>
   );
 }
